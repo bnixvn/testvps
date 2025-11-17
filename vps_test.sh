@@ -9,9 +9,9 @@ RED="\033[0;31m"
 RESET="\033[0m"
 
 # Table width configuration
-TABLE_WIDTH=102
-COL1_WIDTH=35
+COL1_WIDTH=30
 COL2_WIDTH=72
+TABLE_WIDTH=102  # +3 vì 2 dấu | và 1 space padding
 
 print_line() {
   printf "+%*s+\n" $((TABLE_WIDTH - 2)) "" | tr ' ' '-'
@@ -29,7 +29,9 @@ print_center_box() {
 print_kv_row() {
   local key="$1"
   local value="$2"
-  printf "| ${CYAN}%-*s${RESET} | %-*b \n" $((COL1_WIDTH - 2)) "$key" $((COL2_WIDTH - 2)) "$value"
+  # In theo định dạng: | Key (cyan padded) | Value (có màu nếu có) |
+  # Hãy đảm bảo padding đúng và kết thúc bằng |
+  printf "| ${CYAN}%-*s${RESET} | %-*b |\n" $((COL1_WIDTH - 2)) "$key" $((COL2_WIDTH - 2)) "$value"
   print_line
 }
 
@@ -133,10 +135,10 @@ display_system_info() {
   print_kv_row "Virtualization" "$VIRT"
   print_kv_row "Processor" "$CPU_MODEL"
   print_kv_row "CPU Cores" "${CPU_CORES} Core(s) @ ${CPU_MHZ} MHz"
-  print_kv_row "CPU Usage" "${GREEN}${CPU_USAGE}%${RESET}"
+  print_kv_row "CPU Usage" "$CPU_USAGE"
   print_kv_row "System Uptime" "$UPTIME_STR"
   print_kv_row "Load Average" "$LOADAVG"
-  print_kv_row "Memory" "${RAM_TOTAL} Total (Used: ${GREEN}${RAM_USED}${RESET} - Free: ${RAM_FREE} - Usage: ${GREEN}${RAM_USAGE_PCT}${RESET})"
+  print_kv_row "Memory" "${RAM_TOTAL} Total (Used: ${RAM_USED} - Free: ${RAM_FREE} - Usage: ${RAM_USAGE_PCT})"
   print_kv_row "Swap" "${SWAP_TOTAL} Total (Used: ${SWAP_USED})"
   print_kv_row "Disk (Root)" "${DISK_TOTAL} Total (Used: ${DISK_USED} - Free: ${DISK_FREE} - Usage: ${DISK_USAGE})"
 }
@@ -220,7 +222,7 @@ run_fio_test() {
   # In header bảng
   printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
          "Block Size" "Total Throughput" "Read Speed" "Write Speed" "Total IOPS" "Read IOPS" "Write IOPS"
-  print_line
+  print_line_with_length $LOCAL_TABLE_WIDTH
 
   for BS in "${BLOCK_SIZES[@]}"; do
 
@@ -293,7 +295,7 @@ run_fio_test() {
 
 # IOPing latency test
 run_ioping_test() {
-  local LOCAL_TABLE_WIDTH=40
+  local LOCAL_TABLE_WIDTH=45
 
   print_section_header "[ IOPing Latency Test ]"
  
@@ -330,14 +332,12 @@ run_ioping_test() {
 
   # In bảng
   print_line_with_length $LOCAL_TABLE_WIDTH
-  printf "| %-18s | %-15s |\n" "Latency Type" "Value"
-  print_line_with_length $LOCAL_TABLE_WIDTH
-  printf "| %-18s | %-15b |\n" "Average Latency" "${GREEN}${AVG_LAT}${RESET}"
-  printf "| %-18s | %-15s |\n" "Minimum Latency" "$MIN_LAT"
-  printf "| %-18s | %-15s |\n" "Maximum Latency" "$MAX_LAT"
-  # Nếu cần hiện mdev, thêm dòng dưới đây:
-  # printf "| %-18s | %-15s |\n" "Stddev (MDEV)" "$MDEV_LAT"
-  print_line_with_length $LOCAL_TABLE_WIDTH
+	printf "| %-18s | %-20s |\n" "Latency Type" "Value"
+	print_line_with_length $LOCAL_TABLE_WIDTH
+	printf "| %-18s | %-20b |\n" "Average Latency" "$AVG_LAT"
+	printf "| %-18s | %-20s |\n" "Minimum Latency" "$MIN_LAT"
+	printf "| %-18s | %-20s |\n" "Maximum Latency" "$MAX_LAT"
+	print_line_with_length $LOCAL_TABLE_WIDTH
 }
 
 # Main execution
