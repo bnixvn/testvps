@@ -9,9 +9,9 @@ RED="\033[0;31m"
 RESET="\033[0m"
 
 # Table width configuration
-TABLE_WIDTH=105
+TABLE_WIDTH=102
 COL1_WIDTH=35
-COL2_WIDTH=75
+COL2_WIDTH=72
 
 print_line() {
   printf "+%*s+\n" $((TABLE_WIDTH - 2)) "" | tr ' ' '-'
