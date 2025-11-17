@@ -9,30 +9,25 @@ RED="\033[0;31m"
 RESET="\033[0m"
 
 # Table width configuration
-COL1_WIDTH=30
-COL2_WIDTH=72
-TABLE_WIDTH=102  # +3 vì 2 dấu | và 1 space padding
+COL1_WIDTH=27
+COL2_WIDTH=68
+TABLE_WIDTH=102
 
 print_line() {
   printf "+%*s+\n" $((TABLE_WIDTH - 2)) "" | tr ' ' '-'
 }
 
-print_center_box() {
-  local text="$1"
-  local width=$TABLE_WIDTH
-  local padding=$(( (width - ${#text} - 2) / 2 ))
-  local extra=$(( (width - ${#text} - 2) % 2 ))
-  printf "${GREEN}%s${RESET}\n\n" "$text"
-  #print_line
-}
-
 print_kv_row() {
   local key="$1"
   local value="$2"
-  # In theo định dạng: | Key (cyan padded) | Value (có màu nếu có) |
-  # Hãy đảm bảo padding đúng và kết thúc bằng |
-  printf "| ${CYAN}%-*s${RESET} | %-*b |\n" $((COL1_WIDTH - 2)) "$key" $((COL2_WIDTH - 2)) "$value"
+  # Căn chỉnh đúng số ký tự với khoảng trắng và kí tự '|'
+  printf "| ${CYAN}%-*s${RESET} | %-*b |\n" $((COL1_WIDTH)) "$key" $((COL2_WIDTH)) "$value"
   print_line
+}
+
+print_center_box() {
+  local text="$1"
+  printf "${GREEN}%s${RESET}\n\n" "$text"
 }
 
 print_section_header() {
