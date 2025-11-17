@@ -166,7 +166,7 @@ run_dd_test() {
 
     DD_SPEEDS+=("$speed_mb")
 
-    printf "| %-7s | ${GREEN}%-15s${RESET} |\n" "Round $i" "$speed"
+    printf "| %-7s | ${YELLOW}%-15s${RESET} |\n" "Round $i" "$speed"
   done
 
   rm -f testfile_1 testfile_2 testfile_3
@@ -193,7 +193,7 @@ run_dd_test() {
   fi
 
   print_line_with_length $LOCAL_TABLE_WIDTH
-  printf "| %-7s | ${GREEN}%-15s${RESET} |\n" "Average" "$avg_txt"
+  printf "| %-7s | ${YELLOW}%-15s${RESET} |\n" "Average" "$avg_txt"
   print_line_with_length $LOCAL_TABLE_WIDTH
 }
 
