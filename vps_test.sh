@@ -9,9 +9,9 @@ RED="\033[0;31m"
 RESET="\033[0m"
 
 # Table width configuration
-TABLE_WIDTH=100
-COL1_WIDTH=30
-COL2_WIDTH=70
+TABLE_WIDTH=105
+COL1_WIDTH=35
+COL2_WIDTH=75
 
 print_line() {
   printf "+%*s+\n" $((TABLE_WIDTH - 2)) "" | tr ' ' '-'
@@ -22,7 +22,7 @@ print_center_box() {
   local width=$TABLE_WIDTH
   local padding=$(( (width - ${#text} - 2) / 2 ))
   local extra=$(( (width - ${#text} - 2) % 2 ))
-  printf "|%*s%s%*s|\n" $padding "" "$text" $((padding + extra)) ""
+  printf "${GREEN}%*s%s%*s${RESET}\n\n" $padding "" "$text" $((padding + extra)) ""
   print_line
 }
 
@@ -144,136 +144,147 @@ display_system_info() {
 # DD test functions
 run_dd_test() {
   print_section_header "[ DD Sequential Write Test ]"
-  
-  DD_RESULTS=()
+
   DD_SPEEDS=()
   
+  # In header bảng
+  printf "| %-7s | %-15s |\n" "Round" "Speed"
+  print_line
+  
   for i in 1 2 3; do
-    echo -e "${YELLOW}Running DD test round $i...${RESET}" >&2
+    # Chạy dd test
     OUT=$(dd if=/dev/zero of=testfile_$i bs=4M count=256 oflag=direct 2>&1)
-    DD_RESULTS+=("$OUT")
-    
-    # Extract speed safely
+
+    # Lấy tốc độ
     speed=$(echo "$OUT" | grep -oE '[0-9]+(\.[0-9]+)?\s*[GMK]?B/s' | head -1)
     speed_num=$(echo "$speed" | grep -oE '[0-9]+(\.[0-9]+)?')
     speed_unit=$(echo "$speed" | grep -oE '[GMK]?B/s')
-    
-    # Convert to MB/s for calculation
+
+    # Chuyển về MB/s
     case "$speed_unit" in
       GB/s) speed_mb=$(echo "$speed_num * 1024" | bc -l) ;;
       MB/s) speed_mb=$speed_num ;;
       KB/s) speed_mb=$(echo "$speed_num / 1024" | bc -l) ;;
       *) speed_mb=0 ;;
     esac
-    
+
     DD_SPEEDS+=("$speed_mb")
-    print_kv_row "Round $i" "${GREEN}$speed${RESET}"
+
+    # In dòng kết quả round i
+    printf "| %-7s | ${GREEN}%-15s${RESET} |\n" "Round $i" "$speed"
   done
-  
-  # Cleanup
+
   rm -f testfile_1 testfile_2 testfile_3
-  
-  # Calculate average
-  if [ ${#DD_SPEEDS[@]} -gt 0 ]; then
-    sum=0
-    count=0
-    for v in "${DD_SPEEDS[@]}"; do
-      if [ -n "$v" ] && [ "$v" != "0" ]; then
-        sum=$(echo "$sum + $v" | bc -l)
-        count=$((count + 1))
-      fi
-    done
-    
-    if [ $count -gt 0 ]; then
-      avg=$(echo "scale=2; $sum / $count" | bc -l)
-      if (( $(echo "$avg > 1024" | bc -l) )); then
-        avg_display=$(echo "scale=2; $avg / 1024" | bc -l)
-        print_kv_row "Average Speed" "${GREEN}${avg_display} GB/s${RESET}"
-      else
-        print_kv_row "Average Speed" "${GREEN}${avg} MB/s${RESET}"
-      fi
-    else
-      print_kv_row "Average Speed" "${RED}N/A${RESET}"
+
+  # Tính tốc độ trung bình
+  sum=0
+  count=0
+  for v in "${DD_SPEEDS[@]}"; do
+    if [ -n "$v" ] && (( $(echo "$v > 0" | bc -l) )); then
+      sum=$(echo "$sum + $v" | bc -l)
+      count=$((count + 1))
     fi
+  done
+
+  if (( count > 0 )); then
+    avg=$(echo "scale=2; $sum / $count" | bc -l)
+    if (( $(echo "$avg > 1024" | bc -l) )); then
+      avg_display=$(echo "scale=2; $avg / 1024" | bc -l)
+      avg_txt="${avg_display} GB/s"
+    else
+      avg_txt="${avg} MB/s"
+    fi
+  else
+    avg_txt="N/A"
   fi
+
+  print_line
+  printf "| %-7s | ${GREEN}%-15s${RESET} |\n" "Average" "$avg_txt"
+  print_line
 }
 
 # FIO test functions
 run_fio_test() {
   print_section_header "[ FIO Random Read/Write Test ]"
-  
+
   CPU_CORES=$(nproc)
-  NUMJOBS=$(( CPU_CORES > 8 ? 8 : CPU_CORES ))  # Limit to 8 jobs max
+  NUMJOBS=$(( CPU_CORES > 8 ? 8 : CPU_CORES ))  # Giới hạn max 8 jobs
   IODEPTH=$(( NUMJOBS * 2 ))
-  (( IODEPTH > 16 )) && IODEPTH=16  # Reasonable limit for iodepth
-  
+  (( IODEPTH > 16 )) && IODEPTH=16
+
   BLOCK_SIZES=("4k" "16k" "64k" "256k" "1M")
-  
+
+  # In header bảng
+  printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
+         "Block Size" "Total Throughput" "Read Speed" "Write Speed" "Total IOPS" "Read IOPS" "Write IOPS"
+  print_line
+
   for BS in "${BLOCK_SIZES[@]}"; do
-    echo -e "${YELLOW}Testing block size: $BS${RESET}" >&2
-    
-    # Run FIO test
+
+    # Chạy fio
     fio --name=fio_test --ioengine=libaio --rw=randrw --bs=$BS --direct=1 \
         --size=512M --numjobs=$NUMJOBS --iodepth=$IODEPTH --runtime=15 \
         --time_based --group_reporting=1 --output-format=json > fio_tmp.json 2>&1
-    
-    # Validate JSON file
-    if [ ! -s fio_tmp.json ] || ! jq -e . > /dev/null 2>&1 <fio_tmp.json; then
-      print_kv_row "Block Size" "$BS"
-      print_kv_row "Result" "${RED}Test failed or invalid JSON output${RESET}"
+
+    if [ ! -s fio_tmp.json ] || ! jq -e . > /dev/null 2>&1 < fio_tmp.json; then
+      # Nếu lỗi thì ghi dòng báo lỗi
+      printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
+             "$BS" "Test failed" "-" "-" "-" "-" "-"
       continue
     fi
-    
-    # Sum bandwidth and IOPS for all jobs
+
+    # Lấy số liệu
     RD_BW=$(jq '[.jobs[].read.bw] | add' fio_tmp.json 2>/dev/null || echo "0")
     WR_BW=$(jq '[.jobs[].write.bw] | add' fio_tmp.json 2>/dev/null || echo "0")
     RD_IOPS=$(jq '[.jobs[].read.iops] | add' fio_tmp.json 2>/dev/null || echo "0")
     WR_IOPS=$(jq '[.jobs[].write.iops] | add' fio_tmp.json 2>/dev/null || echo "0")
-    
-    # Convert bandwidth from KB/s to MB/s
-    RD_MB=$(awk "BEGIN {printf \"%.2f\", $RD_BW / 1024}")
-    WR_MB=$(awk "BEGIN {printf \"%.2f\", $WR_BW / 1024}")
-    TOT_MB=$(awk "BEGIN {printf \"%.2f\", $RD_MB + $WR_MB}")
-    
-    # Format human readable speeds
-    if (( $(echo "$RD_MB > 1024" | bc -l) )); then
+
+    # Chuyển bandwidth từ KB/s sang MB/s
+    RD_MB=$(awk "BEGIN {printf \"%.0f\", $RD_BW / 1024}")
+    WR_MB=$(awk "BEGIN {printf \"%.0f\", $WR_BW / 1024}")
+    TOT_MB=$(( RD_MB + WR_MB ))
+
+    # Hiển thị throughput với đơn vị MB/s hoặc GB/s nếu > 1024
+    if (( TOT_MB > 1024 )); then
+      TOT_DISPLAY=$(awk "BEGIN {printf \"%.2f GB/s\", $TOT_MB/1024}")
+    else
+      TOT_DISPLAY="${TOT_MB} MB/s"
+    fi
+
+    if (( RD_MB > 1024 )); then
       RD_DISPLAY=$(awk "BEGIN {printf \"%.2f GB/s\", $RD_MB/1024}")
     else
-      RD_DISPLAY=$(awk "BEGIN {printf \"%.0f MB/s\", $RD_MB}")
+      RD_DISPLAY="${RD_MB} MB/s"
     fi
-    
-    if (( $(echo "$WR_MB > 1024" | bc -l) )); then
+
+    if (( WR_MB > 1024 )); then
       WR_DISPLAY=$(awk "BEGIN {printf \"%.2f GB/s\", $WR_MB/1024}")
     else
-      WR_DISPLAY=$(awk "BEGIN {printf \"%.0f MB/s\", $WR_MB}")
+      WR_DISPLAY="${WR_MB} MB/s"
     fi
-    
-    if (( $(echo "$TOT_MB > 1024" | bc -l) )); then
-      TOTAL_DISPLAY=$(awk "BEGIN {printf \"%.2f GB/s\", $TOT_MB/1024}")
-    else
-      TOTAL_DISPLAY=$(awk "BEGIN {printf \"%.0f MB/s\", $TOT_MB}")
-    fi
-    
-    # Calculate total IOPS
-    IOPS_TOTAL=$(awk "BEGIN {printf \"%.0f\", $RD_IOPS + $WR_IOPS}")
-    if [ $IOPS_TOTAL -ge 1000000 ]; then
+
+    # Tính tổng IOPS
+    IOPS_TOTAL=$(awk "BEGIN {printf \"%d\", ($RD_IOPS + $WR_IOPS)}")
+
+    # Format IOPS hiển thị
+    if (( IOPS_TOTAL >= 1000000 )); then
       IOPS_DISPLAY=$(awk "BEGIN {printf \"%.1fM\", $IOPS_TOTAL/1000000}")
-    elif [ $IOPS_TOTAL -ge 1000 ]; then
+    elif (( IOPS_TOTAL >= 1000 )); then
       IOPS_DISPLAY=$(awk "BEGIN {printf \"%.1fk\", $IOPS_TOTAL/1000}")
     else
       IOPS_DISPLAY=$IOPS_TOTAL
     fi
-    
-    # Display results in table
-    print_kv_row "Block Size" "$BS"
-    print_kv_row "Total Throughput" "${GREEN}$TOTAL_DISPLAY${RESET}"
-    print_kv_row "Read Speed" "${PINK}$RD_DISPLAY${RESET}"
-    print_kv_row "Write Speed" "${PINK}$WR_DISPLAY${RESET}"
-    print_kv_row "Total IOPS" "${CYAN}$IOPS_DISPLAY${RESET}"
-    print_kv_row "Read IOPS" "${RD_IOPS%.*}"
-    print_kv_row "Write IOPS" "${WR_IOPS%.*}"
+
+    RD_IOPS_INT=${RD_IOPS%.*}
+    WR_IOPS_INT=${WR_IOPS%.*}
+
+    # In kết quả dòng
+    printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
+           "$BS" "$TOT_DISPLAY" "$RD_DISPLAY" "$WR_DISPLAY" "$IOPS_DISPLAY" "$RD_IOPS_INT" "$WR_IOPS_INT"
+
   done
-  
+
+  print_line
   rm -f fio_tmp.json fio_test.* 2>/dev/null
 }
 
