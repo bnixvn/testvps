@@ -22,8 +22,8 @@ print_center_box() {
   local width=$TABLE_WIDTH
   local padding=$(( (width - ${#text} - 2) / 2 ))
   local extra=$(( (width - ${#text} - 2) % 2 ))
-  printf "${GREEN}%*s%s%*s${RESET}\n\n" $padding "" "$text" $((padding + extra)) ""
-  print_line
+  printf "${GREEN}%s${RESET}\n\n" "$text"
+  #print_line
 }
 
 print_kv_row() {
@@ -126,7 +126,7 @@ get_system_info() {
 
 display_system_info() {
   print_section_header "[ System Information ]"
-  
+  print_line
   print_kv_row "Operating System" "$OS_NAME"
   print_kv_row "Architecture" "$ARCH"
   print_kv_row "Kernel Version" "$KERNEL"
@@ -143,24 +143,23 @@ display_system_info() {
 
 # DD test functions
 run_dd_test() {
+  local LOCAL_TABLE_WIDTH=29
+  
   print_section_header "[ DD Sequential Write Test ]"
-
+  print_line_with_length $LOCAL_TABLE_WIDTH
   DD_SPEEDS=()
   
   # In header bảng
   printf "| %-7s | %-15s |\n" "Round" "Speed"
-  print_line
+  print_line_with_length $LOCAL_TABLE_WIDTH
   
   for i in 1 2 3; do
-    # Chạy dd test
     OUT=$(dd if=/dev/zero of=testfile_$i bs=4M count=256 oflag=direct 2>&1)
 
-    # Lấy tốc độ
     speed=$(echo "$OUT" | grep -oE '[0-9]+(\.[0-9]+)?\s*[GMK]?B/s' | head -1)
     speed_num=$(echo "$speed" | grep -oE '[0-9]+(\.[0-9]+)?')
     speed_unit=$(echo "$speed" | grep -oE '[GMK]?B/s')
 
-    # Chuyển về MB/s
     case "$speed_unit" in
       GB/s) speed_mb=$(echo "$speed_num * 1024" | bc -l) ;;
       MB/s) speed_mb=$speed_num ;;
@@ -170,13 +169,11 @@ run_dd_test() {
 
     DD_SPEEDS+=("$speed_mb")
 
-    # In dòng kết quả round i
     printf "| %-7s | ${GREEN}%-15s${RESET} |\n" "Round $i" "$speed"
   done
 
   rm -f testfile_1 testfile_2 testfile_3
 
-  # Tính tốc độ trung bình
   sum=0
   count=0
   for v in "${DD_SPEEDS[@]}"; do
@@ -198,15 +195,21 @@ run_dd_test() {
     avg_txt="N/A"
   fi
 
-  print_line
+  print_line_with_length $LOCAL_TABLE_WIDTH
   printf "| %-7s | ${GREEN}%-15s${RESET} |\n" "Average" "$avg_txt"
-  print_line
+  print_line_with_length $LOCAL_TABLE_WIDTH
+}
+
+print_line_with_length() {
+  local len=$1
+  printf "+%*s+\n" "$((len - 2))" "" | tr ' ' '-'
 }
 
 # FIO test functions
 run_fio_test() {
+  local LOCAL_TABLE_WIDTH=102
   print_section_header "[ FIO Random Read/Write Test ]"
-
+  print_line_with_length $LOCAL_TABLE_WIDTH
   CPU_CORES=$(nproc)
   NUMJOBS=$(( CPU_CORES > 8 ? 8 : CPU_CORES ))  # Giới hạn max 8 jobs
   IODEPTH=$(( NUMJOBS * 2 ))
@@ -290,15 +293,17 @@ run_fio_test() {
 
 # IOPing latency test
 run_ioping_test() {
-  print_section_header "[ IOPing Latency Test ]"
+  local LOCAL_TABLE_WIDTH=40
 
+  print_section_header "[ IOPing Latency Test ]"
+ 
   if ! command -v ioping >/dev/null 2>&1; then
     print_kv_row "Disk Latency" "${RED}ioping not available${RESET}"
     return
   fi
 
   LATENCY_RESULT=$(ioping -c 10 . 2>&1)
-  RET=$?
+  local RET=$?
 
   if [ $RET -ne 0 ]; then
     print_kv_row "Disk Latency" "${RED}ioping test failed${RESET}"
@@ -306,29 +311,33 @@ run_ioping_test() {
     return
   fi
 
-  LATENCY_LINE=$(echo "$LATENCY_RESULT" | grep -E 'min/avg/max/mdev')
+  local LATENCY_LINE=$(echo "$LATENCY_RESULT" | grep -E 'min/avg/max/mdev')
   if [ -z "$LATENCY_LINE" ]; then
     print_kv_row "Disk Latency" "${RED}Could not parse latency${RESET}"
     return
   fi
 
-  # Lấy phần sau dấu '='
-  VALUES=$(echo "$LATENCY_LINE" | awk -F'= ' '{print $2}')
+  # Lấy phần bên phải dấu '='
+  local VALUES=$(echo "$LATENCY_LINE" | awk -F'= ' '{print $2}')
 
-  # Tách từng phần theo dấu '/'
-  # Mỗi phần có dạng "129.5 us", nên ta dùng sed để xóa khoảng trắng
-  # rồi tách theo '/' chính xác
+  # Tách theo '/' từng phần, loại khoảng trắng
   IFS='/' read -r MIN_LAT AVG_LAT MAX_LAT MDEV_LAT <<< "$VALUES"
 
-  # Loại bỏ khoảng trắng 2 đầu
   MIN_LAT=$(echo "$MIN_LAT" | xargs)
   AVG_LAT=$(echo "$AVG_LAT" | xargs)
   MAX_LAT=$(echo "$MAX_LAT" | xargs)
   MDEV_LAT=$(echo "$MDEV_LAT" | xargs)
 
-  print_kv_row "Average Latency" "${GREEN}${AVG_LAT}${RESET}"
-  print_kv_row "Minimum Latency" "${MIN_LAT}"
-  print_kv_row "Maximum Latency" "${MAX_LAT}"
+  # In bảng
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  printf "| %-18s | %-15s |\n" "Latency Type" "Value"
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  printf "| %-18s | %-15b |\n" "Average Latency" "${GREEN}${AVG_LAT}${RESET}"
+  printf "| %-18s | %-15s |\n" "Minimum Latency" "$MIN_LAT"
+  printf "| %-18s | %-15s |\n" "Maximum Latency" "$MAX_LAT"
+  # Nếu cần hiện mdev, thêm dòng dưới đây:
+  # printf "| %-18s | %-15s |\n" "Stddev (MDEV)" "$MDEV_LAT"
+  print_line_with_length $LOCAL_TABLE_WIDTH
 }
 
 # Main execution
