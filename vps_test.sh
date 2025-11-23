@@ -256,7 +256,7 @@ run_fio_test() {
     printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
            "$BS" "$TOT_DISPLAY" "$RD_DISPLAY" "$WR_DISPLAY" "$IOPS_DISPLAY" "$RD_IOPS_INT" "$WR_IOPS_INT"
   done
-  print_line
+  print_line_with_length $LOCAL_TABLE_WIDTH
   rm -f fio_tmp.json fio_test.* 2>/dev/null
 }
 
