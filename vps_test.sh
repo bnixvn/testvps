@@ -1,4 +1,25 @@
 #!/bin/bash
+
+# Strict mode for better error handling
+set -euo pipefail
+IFS=$'\n\t'
+
+# Temporary files tracking and cleanup
+tmp_files=()
+cleanup() {
+  for f in "${tmp_files[@]}"; do
+    rm -f "$f" 2>/dev/null || true
+  done
+}
+trap cleanup EXIT
+
+# SUDO helper: only use sudo when not running as root
+if [ "$EUID" -eq 0 ]; then
+  SUDO=""
+else
+  SUDO="sudo"
+fi
+
 # Colors
 GREEN="\033[0;32m"
 PINK="\033[0;35m"
@@ -18,13 +39,15 @@ COL2_WIDTH=73
 TABLE_WIDTH=107
 
 print_line() {
-  printf "+%*s+\n" $((TABLE_WIDTH - 2)) "" | tr ' ' '-'
+  local width=$((TABLE_WIDTH - 2))
+  if [ "$width" -le 0 ]; then width=1; fi
+  printf "+%*s+\n" "$width" "" | tr ' ' '-'
 }
 
 print_kv_row() {
   local key="$1"
   local value="$2"
-  printf "| ${CYAN}%-*s${RESET} | %-*b |\n" $((COL1_WIDTH)) "$key" $((COL2_WIDTH)) "$value"
+  printf "| ${CYAN}%-*s${RESET} | %-*s |\n" $((COL1_WIDTH)) "$key" $((COL2_WIDTH)) "$value"
   print_line
 }
 
@@ -46,13 +69,17 @@ silent_install() {
     echo -ne "  -> Installing dependencies (${packages[*]}) ... "
     
     if [ "$pkg_manager" == "apt" ]; then
-        sudo apt-get update >/dev/null 2>&1
-        sudo apt-get install -y "${packages[@]}" >/dev/null 2>&1
+        $SUDO apt-get update >/dev/null 2>&1
+        $SUDO apt-get install -y "${packages[@]}" >/dev/null 2>&1
     elif [ "$pkg_manager" == "yum" ]; then
-        sudo yum install -y epel-release >/dev/null 2>&1
-        sudo yum install -y "${packages[@]}" >/dev/null 2>&1
+        $SUDO yum install -y epel-release >/dev/null 2>&1
+        $SUDO yum install -y "${packages[@]}" >/dev/null 2>&1
     elif [ "$pkg_manager" == "dnf" ]; then
-        sudo dnf install -y "${packages[@]}" >/dev/null 2>&1
+        $SUDO dnf install -y "${packages[@]}" >/dev/null 2>&1
+    elif [ "$pkg_manager" == "apk" ]; then
+        $SUDO apk add --no-cache "${packages[@]}" >/dev/null 2>&1
+    elif [ "$pkg_manager" == "pacman" ]; then
+        $SUDO pacman -Sy --noconfirm "${packages[@]}" >/dev/null 2>&1
     fi
     
     if [ $? -eq 0 ]; then
@@ -81,6 +108,10 @@ check_dependencies() {
       silent_install "dnf" "${missing[@]}"
     elif command -v yum >/dev/null; then
       silent_install "yum" "${missing[@]}"
+    elif command -v apk >/dev/null; then
+      silent_install "apk" "${missing[@]}"
+    elif command -v pacman >/dev/null; then
+      silent_install "pacman" "${missing[@]}"
     else
       echo "Package manager not found. Please install manually: ${missing[*]}"
       exit 1
@@ -156,20 +187,30 @@ run_dd_test() {
   printf "| %-7s | %-15s |\n" "Round" "Speed"
   print_line_with_length $LOCAL_TABLE_WIDTH
   for i in 1 2 3; do
-    OUT=$(dd if=/dev/zero of=testfile_$i bs=4M count=256 oflag=direct 2>&1)
-    speed=$(echo "$OUT" | grep -oE '[0-9]+(\.[0-9]+)?\s*[GMK]?B/s' | head -1)
+    local testfile=$(mktemp /tmp/dd_test.XXXXXX)
+    tmp_files+=("$testfile")
+    
+    # Run dd with conv=fdatasync to ensure stats are printed
+    local OUT=$(dd if=/dev/zero of="$testfile" bs=4M count=256 oflag=direct conv=fdatasync 2>&1)
+    
+    # Parse speed from stderr output
+    speed=$(echo "$OUT" | grep -oE '[0-9]+(\.[0-9]+)?\s*[GMK]?B/s' | tail -1)
     speed_num=$(echo "$speed" | grep -oE '[0-9]+(\.[0-9]+)?')
     speed_unit=$(echo "$speed" | grep -oE '[GMK]?B/s')
+    
+    # Convert to MB/s
     case "$speed_unit" in
       GB/s) speed_mb=$(echo "$speed_num * 1024" | bc -l) ;;
       MB/s) speed_mb=$speed_num ;;
       KB/s) speed_mb=$(echo "$speed_num / 1024" | bc -l) ;;
+      B/s)  speed_mb=$(echo "$speed_num / 1024 / 1024" | bc -l) ;;
       *) speed_mb=0 ;;
     esac
     DD_SPEEDS+=("$speed_mb")
     printf "| %-7s | ${YELLOW}%-15s${RESET} |\n" "Round $i" "$speed"
   done
-  rm -f testfile_1 testfile_2 testfile_3
+  
+  # Compute average safely
   sum=0
   count=0
   for v in "${DD_SPEEDS[@]}"; do
@@ -196,7 +237,9 @@ run_dd_test() {
 
 print_line_with_length() {
   local len=$1
-  printf "+%*s+\n" "$((len - 2))" "" | tr ' ' '-'
+  local width=$((len - 2))
+  if [ "$width" -le 0 ]; then width=1; fi
+  printf "+%*s+\n" "$width" "" | tr ' ' '-'
 }
 
 # FIO test functions
@@ -212,19 +255,31 @@ run_fio_test() {
   printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
          "Block Size" "Total Throughput" "Read Speed" "Write Speed" "Total IOPS" "Read IOPS" "Write IOPS"
   print_line_with_length $LOCAL_TABLE_WIDTH
+  
+  # Create temp files for FIO test data
+  local fio_testfile=$(mktemp /tmp/fio_test_data.XXXXXX)
+  tmp_files+=("$fio_testfile")
+  
   for BS in "${BLOCK_SIZES[@]}"; do
+    local fio_json=$(mktemp /tmp/fio_output.XXXXXX.json)
+    tmp_files+=("$fio_json")
+    
     fio --name=fio_test --ioengine=libaio --rw=randrw --bs=$BS --direct=1 \
         --size=512M --numjobs=$NUMJOBS --iodepth=$IODEPTH --runtime=15 \
-        --time_based --group_reporting=1 --output-format=json > fio_tmp.json 2>&1
-    if [ ! -s fio_tmp.json ] || ! jq -e . > /dev/null 2>&1 < fio_tmp.json; then
+        --time_based --group_reporting=1 --filename="$fio_testfile" \
+        --output="$fio_json" --output-format=json >/dev/null 2>&1
+    
+    # Validate JSON with jq -e
+    if [ ! -s "$fio_json" ] || ! jq -e . "$fio_json" >/dev/null 2>&1; then
       printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
              "$BS" "Test failed" "-" "-" "-" "-" "-"
       continue
     fi
-    RD_BW=$(jq '[.jobs[].read.bw] | add' fio_tmp.json 2>/dev/null || echo "0")
-    WR_BW=$(jq '[.jobs[].write.bw] | add' fio_tmp.json 2>/dev/null || echo "0")
-    RD_IOPS=$(jq '[.jobs[].read.iops] | add' fio_tmp.json 2>/dev/null || echo "0")
-    WR_IOPS=$(jq '[.jobs[].write.iops] | add' fio_tmp.json 2>/dev/null || echo "0")
+    
+    RD_BW=$(jq '[.jobs[].read.bw] | add' "$fio_json" 2>/dev/null || echo "0")
+    WR_BW=$(jq '[.jobs[].write.bw] | add' "$fio_json" 2>/dev/null || echo "0")
+    RD_IOPS=$(jq '[.jobs[].read.iops] | add' "$fio_json" 2>/dev/null || echo "0")
+    WR_IOPS=$(jq '[.jobs[].write.iops] | add' "$fio_json" 2>/dev/null || echo "0")
     RD_MB=$(awk "BEGIN {printf \"%.0f\", $RD_BW / 1024}")
     WR_MB=$(awk "BEGIN {printf \"%.0f\", $WR_BW / 1024}")
     TOT_MB=$(( RD_MB + WR_MB ))
@@ -257,7 +312,6 @@ run_fio_test() {
            "$BS" "$TOT_DISPLAY" "$RD_DISPLAY" "$WR_DISPLAY" "$IOPS_DISPLAY" "$RD_IOPS_INT" "$WR_IOPS_INT"
   done
   print_line_with_length $LOCAL_TABLE_WIDTH
-  rm -f fio_tmp.json fio_test.* 2>/dev/null
 }
 
 # IOPing latency test
@@ -275,21 +329,33 @@ run_ioping_test() {
     echo -e "${RED}ioping output:${RESET}\n$LATENCY_RESULT" >&2
     return
   fi
+  
+  # Try to parse latency line
   local LATENCY_LINE=$(echo "$LATENCY_RESULT" | grep -E 'min/avg/max/mdev')
   if [ -z "$LATENCY_LINE" ]; then
     print_kv_row "Disk Latency" "${RED}Could not parse latency${RESET}"
+    echo -e "${YELLOW}Debug: ioping raw output:${RESET}\n$LATENCY_RESULT" >&2
     return
   fi
+  
+  # Extract values: format is "min/avg/max/mdev = 123.4 us / 234.5 us / 345.6 us / 45.6 us"
   local VALUES=$(echo "$LATENCY_LINE" | awk -F'= ' '{print $2}')
+  if [ -z "$VALUES" ]; then
+    print_kv_row "Disk Latency" "${RED}Could not extract values${RESET}"
+    echo -e "${YELLOW}Debug: latency line:${RESET}\n$LATENCY_LINE" >&2
+    return
+  fi
+  
   IFS='/' read -r MIN_LAT AVG_LAT MAX_LAT MDEV_LAT <<< "$VALUES"
   MIN_LAT=$(echo "$MIN_LAT" | xargs)
   AVG_LAT=$(echo "$AVG_LAT" | xargs)
   MAX_LAT=$(echo "$MAX_LAT" | xargs)
   MDEV_LAT=$(echo "$MDEV_LAT" | xargs)
+  
   print_line_with_length $LOCAL_TABLE_WIDTH
   printf "| %-18s | %-20s |\n" "Latency Type" "Value"
   print_line_with_length $LOCAL_TABLE_WIDTH
-  printf "| %-18s | %-20b |\n" "Average Latency" "$AVG_LAT"
+  printf "| %-18s | %-20s |\n" "Average Latency" "$AVG_LAT"
   printf "| %-18s | %-20s |\n" "Minimum Latency" "$MIN_LAT"
   printf "| %-18s | %-20s |\n" "Maximum Latency" "$MAX_LAT"
   print_line_with_length $LOCAL_TABLE_WIDTH
@@ -339,7 +405,7 @@ install_official_speedtest() {
   if [[ "$OS_ID" == "ubuntu" ]] && [[ "$OS_VER" -ge 25 ]]; then
       echo -ne "(Snap) ... "
       if command -v snap >/dev/null 2>&1; then
-          sudo snap install speedtest >/dev/null 2>&1
+          $SUDO snap install speedtest >/dev/null 2>&1
       else
           echo -e "${RED}Snap not found${RESET}"
           return 1
@@ -347,13 +413,13 @@ install_official_speedtest() {
   
   # Standard Debian/Ubuntu < 25
   elif [ -f /etc/debian_version ]; then
-      curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash >/dev/null 2>&1
-      sudo apt-get install -y speedtest >/dev/null 2>&1
+      curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | $SUDO bash >/dev/null 2>&1
+      $SUDO apt-get install -y speedtest >/dev/null 2>&1
       
   # RHEL/CentOS/Alma/Rocky
   elif [ -f /etc/redhat-release ]; then
-      curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh | sudo bash >/dev/null 2>&1
-      sudo yum install -y speedtest >/dev/null 2>&1
+      curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh | $SUDO bash >/dev/null 2>&1
+      $SUDO yum install -y speedtest >/dev/null 2>&1
   else
       echo -e "${RED}FAILED (Unsupported OS)${RESET}"
       return 1
@@ -370,8 +436,15 @@ run_speedtest_official_binary() {
   local SERVER_ID=$1
   local JSON_OUTPUT=$(speedtest --accept-license --accept-gdpr --server-id "$SERVER_ID" -f json 2>/dev/null)
   
-  if [ -z "$JSON_OUTPUT" ] || [ $(echo "$JSON_OUTPUT" | jq -r '.type') == "error" ]; then 
+  # Validate JSON with jq -e
+  if [ -z "$JSON_OUTPUT" ] || ! echo "$JSON_OUTPUT" | jq -e . >/dev/null 2>&1; then 
       return 1 
+  fi
+  
+  # Check if the response is an error
+  local response_type=$(echo "$JSON_OUTPUT" | jq -r '.type // "result"')
+  if [ "$response_type" == "error" ]; then
+      return 1
   fi
 
   local DL_BYTES=$(echo "$JSON_OUTPUT" | jq -r '.download.bandwidth')
@@ -411,41 +484,39 @@ print_speedtest_row() {
   printf "| %-6s | %-30s | %-15s | %-12s | %-12s |\n" "$id" "$server" "$dl" "$ul" "$lat"
 }
 
-# --- FALLBACK HTTP METHOD (WGET/CURL) ---
+# --- FALLBACK HTTP METHOD (CURL) ---
 
 test_url_speed() {
     local url=$1
     local name=$2
     
-    local wget_output=$(wget -4O /dev/null -T10 "$url" 2>&1)
-    local speed_raw=$(echo "$wget_output" | grep -oE '[0-9.]+\s?[KMG]B/s' | tail -1)
+    # Use curl with speed_download to measure download speed
+    local curl_output=$(curl -4 -o /dev/null -s -w "%{speed_download}" --max-time 10 "$url" 2>&1)
     local display_speed="Error"
     
-    if [ -n "$speed_raw" ]; then
-        local val=$(echo "$speed_raw" | grep -oE '[0-9.]+')
-        local unit=$(echo "$speed_raw" | grep -oE '[KMG]B/s')
-        
-        if [[ "$unit" == *"GB/s"* ]]; then
-            display_speed=$(echo "$val * 1024 * 8" | bc)
-            display_speed="${display_speed} Mbps"
-        elif [[ "$unit" == *"MB/s"* ]]; then
-            display_speed=$(echo "$val * 8" | bc)
-            display_speed="${display_speed} Mbps"
-        elif [[ "$unit" == *"KB/s"* ]]; then
-            display_speed=$(echo "scale=2; $val * 0.0078125" | bc)
-            display_speed="${display_speed} Mbps"
-        else
-            display_speed="$speed_raw"
-        fi
+    # curl returns speed in bytes/sec, convert to Mbps
+    if [[ "$curl_output" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+        local bytes_per_sec="$curl_output"
+        # Convert bytes/sec to Mbps: (bytes/sec * 8) / 1000000
+        display_speed=$(echo "scale=2; $bytes_per_sec * 8 / 1000000" | bc)
+        display_speed="${display_speed} Mbps"
     fi
 
     # LOGIC: Upload = Download in Fallback mode
     local upload_speed="$display_speed"
 
-    local domain=$(echo $url | awk -F'/' '{print $3}')
-    local ping=$(ping -c1 -4 -W 2 $domain 2>/dev/null | awk -F'time=' '{print $2}' | cut -d ' ' -f 1 | tr -d '\r\n')
+    # Extract domain and compute ping safely
+    local domain=$(echo "$url" | awk -F'/' '{print $3}')
+    # Remove port if present
+    domain=$(echo "$domain" | cut -d: -f1)
     
-    if [ -z "$ping" ]; then ping="-"; else ping="${ping} ms"; fi
+    local ping=$(ping -c1 -4 -W 2 "$domain" 2>/dev/null | awk -F'time=' '{print $2}' | cut -d ' ' -f 1 | tr -d '\r\n')
+    
+    if [ -z "$ping" ] || [ "$ping" == "" ]; then 
+        ping="-"
+    else 
+        ping="${ping} ms"
+    fi
     
     print_speedtest_row "HTTP" "$name" "$display_speed" "$upload_speed" "$ping"
 }
