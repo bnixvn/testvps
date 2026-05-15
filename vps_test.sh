@@ -316,79 +316,75 @@ server_list=(
 )
 
 install_official_speedtest() {
-  # Nếu đã có speedtest rồi thì bỏ qua
-  if command -v speedtest >/dev/null 2>&1; then
-      if speedtest --version 2>&1 | grep -q "Ookla"; then
-          return
-      fi
-  fi
+    # Nếu đã có speedtest rồi thì bỏ qua
+    if command -v speedtest >/dev/null 2>&1; then
+        if speedtest --version 2>&1 | grep -q "Ookla"; then
+            return
+        fi
+    fi
 
-  echo "→ Installing Official Ookla Speedtest..."
+    echo -ne "  -> Installing Official Ookla Speedtest (Silent Mode) ... "
 
-  # Lấy thông tin OS
-  OS=""
-  if [ -f /etc/os-release ]; then
-      . /etc/os-release
-      OS=$ID
-      VER=$VERSION_ID
-  elif uname -s | grep -qi "Darwin"; then
-      OS="macos"
-  elif uname -s | grep -qi "FreeBSD"; then
-      OS="freebsd"
-  fi
+    # Lấy thông tin OS
+    OS=""
+    if [ -f /etc/os-release ]; then
+        . /etc/os-release
+        OS=$ID
+        VER=$VERSION_ID
+    elif uname -s | grep -qi "Darwin"; then
+        OS="macos"
+    elif uname -s | grep -qi "FreeBSD"; then
+        OS="freebsd"
+    fi
 
-  case "$OS" in
-      ubuntu|debian)
-          # Ubuntu 24.04 fix
-          if [[ "$VER" == "24.04" ]]; then
-              echo "Ubuntu 24.04 detected → Using patched installer"
-              wget -qO - https://raw.githubusercontent.com/VadimBoev/speedtest-cli-ubuntu-24.04-LTS/main/install.sh | sudo bash
-          else
-              echo "Debian/Ubuntu detected → Using Ookla repo"
-              curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
-              sudo apt-get install -y speedtest
-          fi
-          ;;
+    case "$OS" in
+        ubuntu|debian)
+            if [[ "$VER" == "24.04" ]]; then
+                wget -qO - https://raw.githubusercontent.com/VadimBoev/speedtest-cli-ubuntu-24.04-LTS/main/install.sh \
+                    | sudo bash >/dev/null 2>&1
+            else
+                curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh \
+                    | sudo bash >/dev/null 2>&1
+                sudo apt-get install -y speedtest >/dev/null 2>&1
+            fi
+            ;;
 
-      rhel|centos|rocky|almalinux|fedora)
-          echo "RHEL/CentOS/Fedora detected → Using RPM repo"
-          curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh | sudo bash
-          sudo yum install -y speedtest || sudo dnf install -y speedtest
-          ;;
+        rhel|centos|rocky|almalinux|fedora)
+            curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh \
+                | sudo bash >/dev/null 2>&1
+            sudo yum install -y speedtest >/dev/null 2>&1 || \
+            sudo dnf install -y speedtest >/dev/null 2>&1
+            ;;
 
-      arch)
-          echo "Arch Linux detected → Installing via pacman"
-          sudo pacman -Sy --noconfirm speedtest-cli
-          ;;
+        arch)
+            sudo pacman -Sy --noconfirm speedtest-cli >/dev/null 2>&1
+            ;;
 
-      alpine)
-          echo "Alpine Linux detected → Installing via apk"
-          sudo apk add speedtest-cli
-          ;;
+        alpine)
+            sudo apk add speedtest-cli >/dev/null 2>&1
+            ;;
 
-      macos)
-          echo "macOS detected → Installing via Homebrew"
-          brew install speedtest-cli
-          ;;
+        macos)
+            brew install speedtest-cli >/dev/null 2>&1
+            ;;
 
-      freebsd)
-          echo "FreeBSD detected → Installing via pkg"
-          sudo pkg install -y speedtest
-          ;;
+        freebsd)
+            sudo pkg install -y speedtest >/dev/null 2>&1
+            ;;
 
-      *)
-          echo "Unsupported OS → Trying Snap"
-          if command -v snap >/dev/null 2>&1; then
-              sudo snap install speedtest
-          else
-              echo "FAILED: No supported installer found"
-              return 1
-          fi
-          ;;
-  esac
+        *)
+            if command -v snap >/dev/null 2>&1; then
+                sudo snap install speedtest >/dev/null 2>&1
+            else
+                echo -e "${RED}FAILED${RESET}"
+                return 1
+            fi
+            ;;
+    esac
 
-  echo "→ Speedtest installation completed."
+    echo -e "${GREEN}OK${RESET}"
 }
+
 
 
 run_speedtest_official_binary() {
