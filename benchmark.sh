@@ -689,20 +689,15 @@ upload_result_online() {
 main() {
   clear
 
-  # Start tee logging so output still shows on SSH and overwrites LOG_FILE for this run only
+  # Install dependencies silently before logging so install messages are not included in the result.
+  install_all >/dev/null 2>&1
+
+  # Start tee logging so output still shows on SSH and overwrites LOG_FILE for this run only.
+  # Save original stdout/stderr so upload messages can be kept out of LOG_FILE later.
+  exec 3>&1 4>&2
   exec > >(tee "$LOG_FILE") 2>&1
 
-  echo "=== SYSTEM BENCHMARK RESULT ==="
-  echo "Generated: $(date)"
-  echo ""
-
-  echo -e "${CYAN}System Benchmark Tool${RESET}"
-  echo -e "${YELLOW}Starting comprehensive system tests...${RESET}\n"
-
-  # 1) Install everything first
-  install_all
-
-  # 2) Run tests (original order preserved)
+  # Run tests (only benchmark output is written to LOG_FILE)
   get_system_info
   display_system_info
 
@@ -713,11 +708,11 @@ main() {
   # Network tests
   run_speedtest_all_official
 
-  # 3) Upload results to public web paste services (no login)
-  echo ""
-  echo "[ Uploading result to Web Paste (no login) ]"
+  # Stop logging before upload so upload status/link is not included in benchmark_result.txt.
+  exec 1>&3 2>&4
+  exec 3>&- 4>&-
 
-  ONLINE_URL=$(upload_result_online) || ONLINE_URL=""
+  ONLINE_URL=$(upload_result_online 2>/dev/null) || ONLINE_URL=""
   echo ""
   echo "=== RESULT ONLINE ==="
   if [ -n "$ONLINE_URL" ]; then
@@ -725,8 +720,6 @@ main() {
   else
     echo "Upload failed. Local file: $LOG_FILE"
   fi
-
-  echo -e "\n${GREEN}All tests completed successfully!${RESET}"
 }
 
 # Run main
