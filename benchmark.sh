@@ -497,6 +497,28 @@ print_speedtest_row() {
   printf "| %-6s | %-30s | %-15s | %-12s | %-12s |\n" "$id" "$server" "$dl" "$ul" "$lat"
 }
 
+print_fallback_speedtest_header() {
+  local WIDTH=78
+  printf "+%*s+\n" $((WIDTH - 6)) "" | tr ' ' '-'
+  printf "| %-6s | %-30s | %-15s | %-12s |\n" "ID" "Server" "Download" "Latency"
+  printf "+%*s+\n" $((WIDTH - 6)) "" | tr ' ' '-'
+}
+
+print_fallback_speedtest_row() {
+  local id="$1"
+  local server="$2"
+  local dl="$3"
+  local lat="$4"
+  
+  id=$(echo "$id" | tr -d '\r\n')
+  server=$(echo "$server" | tr -d '\r\n')
+  dl=$(echo "$dl" | tr -d '\r\n')
+  lat=$(echo "$lat" | tr -d '\r\n')
+
+  if [ ${#server} -gt 30 ]; then server="${server:0:27}..."; fi
+  printf "| %-6s | %-30s | %-15s | %-12s |\n" "$id" "$server" "$dl" "$lat"
+}
+
 # -------------------------
 # FALLBACK HTTP METHOD (WGET/CURL)
 # -------------------------
@@ -529,9 +551,6 @@ test_url_speed() {
         fi
     fi
 
-    # LOGIC: Upload = Download in Fallback mode
-    local upload_speed="$display_speed"
-
     local domain
     domain=$(echo "$url" | awk -F'/' '{print $3}')
     local ping
@@ -539,19 +558,17 @@ test_url_speed() {
     
     if [ -z "$ping" ]; then ping="-"; else ping="${ping} ms"; fi
     
-    print_speedtest_row "HTTP" "$name" "$display_speed" "$upload_speed" "$ping"
+    print_fallback_speedtest_row "HTTP" "$name" "$display_speed" "$ping"
 }
 
 run_fallback_speedtest() {
-    print_speedtest_header
+    print_fallback_speedtest_header
     
     # International
     test_url_speed 'https://wa-us-ping.vultr.com/vultr.com.100MB.bin' 'Vultr Seattle, US'
     test_url_speed 'http://tyo.download.datapacket.com/100mb.bin' 'CDN77, JP'
-    test_url_speed 'http://speedtest.c1.hkg1.dediserve.com/100MB.test' 'Dediserve Hong Kong, HK'
-    test_url_speed 'https://sgp.proof.ovh.net/files/100Mb.dat' 'OVH Singapore, SG'
-    test_url_speed 'https://speed.cloudflare.com/__down?during=download&bytes=104857600' 'Cloudflare Anycast'
-    
+    test_url_speed 'http://speedtest.hkg12.hk.leaseweb.net/100mb.bin' 'Leaseweb Hong Kong, HK'
+    test_url_speed 'https://sgp.proof.ovh.net/files/100Mb.dat' 'OVH Singapore, SG'    
     # Vietnam
     test_url_speed 'http://speedtest1.vtn.com.vn/speedtest/random4000x4000.jpg' 'VNPT Ha Noi, VN'
     test_url_speed 'http://speedtest5.vtn.com.vn/speedtest/random4000x4000.jpg' 'VNPT Da Nang, VN'
@@ -560,7 +577,7 @@ run_fallback_speedtest() {
     test_url_speed 'http://speedtestkv2a.viettel.vn/speedtest/random4000x4000.jpg' 'Viettel Da Nang, VN'
     test_url_speed 'http://centos-hcm.viettelidc.com.vn/7/isos/x86_64/CentOS-7-x86_64-Minimal-2207-02.iso' 'Viettel Ho Chi Minh, VN'
     
-    local WIDTH=95
+    local WIDTH=78
     printf "+%*s+\n" $((WIDTH - 6)) "" | tr ' ' '-'
 }
 
@@ -694,7 +711,7 @@ upload_result_online() {
 # -------------------------
 main() {
   clear
-  echo "Begin Install Test Tools"
+
   # Install dependencies silently before logging so install messages are not included in the result.
   install_all >/dev/null 2>&1
 
