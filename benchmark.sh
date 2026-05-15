@@ -2,7 +2,7 @@
 # Full benchmark script (complete, self-contained)
 # - Installs dependencies first (silent)
 # - Runs all tests (system info, dd, fio, ioping, speedtest/fallback)
-# - Logs everything to benchmark_result.txt (tee so output still shows on SSH)
+# - Logs current run to benchmark_result.txt (tee so output still shows on SSH)
 # - Uploads the log to public web paste services and prints the result URL
 #
 # Usage:
@@ -25,8 +25,8 @@ RESET="\033[0m"
 CHECK_URL_8080="http://8080.legiang360.com:8080"
 LOG_FILE="benchmark_result.txt"
 # Optional: set CUSTOM_UPLOAD_URL to your own endpoint that accepts multipart field "file".
-# Example: CUSTOM_UPLOAD_URL="https://benchmark.bnixvps.io.vn/upload.php" ./benchmark.sh
-CUSTOM_UPLOAD_URL="${CUSTOM_UPLOAD_URL:-https://benchmark.bnixvps.io.vn/upload.php}"
+# Example: CUSTOM_UPLOAD_URL="https://benchmark.bnix.io.vn/upload.php" ./benchmark.sh
+CUSTOM_UPLOAD_URL="${CUSTOM_UPLOAD_URL:-https://benchmark.bnix.io.vn/upload.php}"
 
 # Flag to avoid reinstalling speedtest multiple times
 SPEEDTEST_INSTALLED=0
@@ -138,13 +138,10 @@ install_official_speedtest() {
     # If speedtest exists and is Ookla, skip
     if command -v speedtest >/dev/null 2>&1; then
         if speedtest --version 2>&1 | grep -q "Ookla"; then
-            echo "Ookla speedtest already installed."
             SPEEDTEST_INSTALLED=1
             return 0
         fi
     fi
-
-    echo -ne "  -> Installing Official Ookla Speedtest (Silent Mode) ... "
 
     OS=""
     VER=""
@@ -160,11 +157,11 @@ install_official_speedtest() {
         ubuntu|debian)
             if [[ "$VER" == "24.04" ]]; then
                 wget -qO - https://raw.githubusercontent.com/VadimBoev/speedtest-cli-ubuntu-24.04-LTS/main/install.sh \
-                    | sudo bash >/dev/null 2>&1 || { echo -e "${RED}FAILED${RESET}"; return 1; }
+              | sudo bash >/dev/null 2>&1 || return 1
             else
                 curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh \
                     | sudo bash >/dev/null 2>&1
-                sudo apt-get install -y speedtest >/dev/null 2>&1 || { echo -e "${RED}FAILED${RESET}"; return 1; }
+            sudo apt-get install -y speedtest >/dev/null 2>&1 || return 1
             fi
             ;;
         rhel|centos|rocky|almalinux|fedora)
@@ -182,7 +179,6 @@ install_official_speedtest() {
             if command -v brew >/dev/null 2>&1; then
                 brew install speedtest-cli >/dev/null 2>&1
             else
-                echo -e "${RED}Homebrew not found${RESET}"
                 return 1
             fi
             ;;
@@ -193,7 +189,6 @@ install_official_speedtest() {
             if command -v snap >/dev/null 2>&1; then
                 sudo snap install speedtest >/dev/null 2>&1
             else
-                echo -e "${RED}FAILED${RESET}"
                 return 1
             fi
             ;;
@@ -203,11 +198,9 @@ install_official_speedtest() {
     hash -r 2>/dev/null || true
 
     if command -v speedtest >/dev/null 2>&1; then
-        echo -e "${GREEN}OK${RESET}"
         SPEEDTEST_INSTALLED=1
         return 0
     else
-        echo -e "${RED}FAILED${RESET}"
         return 1
     fi
 }
@@ -578,29 +571,23 @@ run_fallback_speedtest() {
 # -------------------------
 check_outbound_port_8080() {
     local url="$CHECK_URL_8080"
-    echo -ne "Checking outbound 8080 ... "
     if curl -f -s -I --connect-timeout 5 "$url" >/dev/null 2>&1; then
-        echo -e "${GREEN}OK${RESET}"
         return 0
     else
-        echo -e "${RED}Failed${RESET}"
         return 1
     fi
 }
 
 run_speedtest_all_official() {
-  print_section_header "[ Network Speed Test (Official Ookla Binary) ]"
+  print_section_header "[ Network Speed Test ]"
 
   # If not installed earlier, install now (idempotent)
   if [ "$SPEEDTEST_INSTALLED" -eq 0 ]; then
-    install_official_speedtest || echo "Warning: speedtest install failed or not available."
+    install_official_speedtest >/dev/null 2>&1 || true
     hash -r 2>/dev/null || true
-  else
-    echo "Ookla speedtest already installed (skipped install)."
   fi
 
   if check_outbound_port_8080; then
-      echo -e "${GREEN}Port 8080 is open. Using Official Speedtest Binary.${RESET}"
       print_speedtest_header
       
       for SERVER_ID in "${server_list[@]}"; do
@@ -702,8 +689,8 @@ upload_result_online() {
 main() {
   clear
 
-  # Start tee logging so output still shows on SSH and also writes to LOG_FILE
-  exec > >(tee -a "$LOG_FILE") 2>&1
+  # Start tee logging so output still shows on SSH and overwrites LOG_FILE for this run only
+  exec > >(tee "$LOG_FILE") 2>&1
 
   echo "=== SYSTEM BENCHMARK RESULT ==="
   echo "Generated: $(date)"
