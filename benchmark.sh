@@ -441,6 +441,7 @@ server_list=(
   26853 # Viettel Network Ho Chi Minh
   2552  # FPT Telecom Ha Noi
   44677 # FPT Telecom Da Nang
+  11342 # VIETPN CO, LTD
   44817 # SPTEL PTE Ltd Singapore
   19230 # Hivelocity Los Angeles
   8864  # CenturyLink Seattle
