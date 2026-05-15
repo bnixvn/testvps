@@ -25,6 +25,9 @@ RESET="\033[0m"
 CHECK_URL_8080="http://8080.legiang360.com:8080"
 LOG_FILE="benchmark_result.txt"
 
+# Flag to avoid reinstalling speedtest multiple times
+SPEEDTEST_INSTALLED=0
+
 # Table width configuration
 COL1_WIDTH=27
 COL2_WIDTH=73
@@ -133,6 +136,7 @@ install_official_speedtest() {
     if command -v speedtest >/dev/null 2>&1; then
         if speedtest --version 2>&1 | grep -q "Ookla"; then
             echo "Ookla speedtest already installed."
+            SPEEDTEST_INSTALLED=1
             return 0
         fi
     fi
@@ -192,8 +196,12 @@ install_official_speedtest() {
             ;;
     esac
 
+    # Refresh shell hash so newly installed binary is found
+    hash -r 2>/dev/null || true
+
     if command -v speedtest >/dev/null 2>&1; then
         echo -e "${GREEN}OK${RESET}"
+        SPEEDTEST_INSTALLED=1
         return 0
     else
         echo -e "${RED}FAILED${RESET}"
@@ -579,7 +587,14 @@ check_outbound_port_8080() {
 
 run_speedtest_all_official() {
   print_section_header "[ Network Speed Test (Official Ookla Binary) ]"
-  install_official_speedtest
+
+  # If not installed earlier, install now (idempotent)
+  if [ "$SPEEDTEST_INSTALLED" -eq 0 ]; then
+    install_official_speedtest || echo "Warning: speedtest install failed or not available."
+    hash -r 2>/dev/null || true
+  else
+    echo "Ookla speedtest already installed (skipped install)."
+  fi
 
   if check_outbound_port_8080; then
       echo -e "${GREEN}Port 8080 is open. Using Official Speedtest Binary.${RESET}"
