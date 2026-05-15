@@ -543,8 +543,6 @@ test_url_speed() {
 }
 
 run_fallback_speedtest() {
-    echo -e "${RED}Cannot connect speedtest because port 8080 is close${RESET}"
-    echo -e "${YELLOW}Switching to HTTP Download method (Fallback Mode).${RESET}"
     print_speedtest_header
     
     # International
@@ -696,7 +694,7 @@ upload_result_online() {
 # -------------------------
 main() {
   clear
-
+  echo "Begin Install Test Tools"
   # Install dependencies silently before logging so install messages are not included in the result.
   install_all >/dev/null 2>&1
 
