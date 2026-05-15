@@ -7,8 +7,12 @@ YELLOW="\033[1;33m"
 RED="\033[0;31m"
 RESET="\033[0m"
 
+# ==========================================
+# CẤU HÌNH KIỂM TRA PORT
+# ==========================================
 CHECK_URL_8080="http://8080.legiang360.com:8080"
 
+# Table width configuration
 COL1_WIDTH=27
 COL2_WIDTH=73
 TABLE_WIDTH=107
@@ -34,6 +38,7 @@ print_section_header() {
   print_center_box "$1"
 }
 
+# --- SILENT INSTALL HELPER ---
 silent_install() {
     local pkg_manager=$1
     shift
@@ -58,6 +63,7 @@ silent_install() {
     fi
 }
 
+# Check required tools (Silent)
 check_dependencies() {
   local deps=("bc" "fio" "ioping" "jq" "wget" "curl")
   local missing=()
@@ -82,6 +88,232 @@ check_dependencies() {
   fi
 }
 
+# System information functions
+get_system_info() {
+  if [ -f /etc/os-release ]; then
+    OS_NAME=$(grep PRETTY_NAME /etc/os-release | cut -d= -f2 | tr -d '"')
+  else
+    OS_NAME=$(uname -srv)
+  fi
+  CPU_MODEL=$(lscpu | grep "Model name" | cut -d: -f2 | sed 's/^[ \t]*//' | head -1)
+  CPU_CORES=$(nproc)
+  CPU_MHZ=$(lscpu | awk '/MHz/ {print $3; exit}')
+  CPU_IDLE=$(top -bn2 | grep "Cpu(s)" | tail -1 | awk -F',' '{print $4}' | awk '{print $1}')
+  CPU_USAGE=$(awk "BEGIN {printf \"%.1f\", 100 - $CPU_IDLE}")
+  RAM_TOTAL=$(free -h | awk '/Mem:/ {print $2}')
+  RAM_USED=$(free -h | awk '/Mem:/ {print $3}')
+  RAM_FREE=$(free -h | awk '/Mem:/ {print $4}')
+  RAM_USAGE_PCT=$(free | awk '/Mem:/ {printf \"%.0f%%\", $3/$2 * 100}')
+  SWAP_TOTAL=$(free -h | awk '/Swap:/ {print $2}')
+  SWAP_USED=$(free -h | awk '/Swap:/ {print $3}')
+  DISK_TOTAL=$(df -h / | awk 'NR==2{print $2}')
+  DISK_USED=$(df -h / | awk 'NR==2{print $3}')
+  DISK_FREE=$(df -h / | awk 'NR==2{print $4}')
+  DISK_USAGE=$(df -h / | awk 'NR==2{print $5}')
+  ARCH=$(uname -m)
+  KERNEL=$(uname -r)
+  if command -v systemd-detect-virt >/dev/null 2>&1; then
+    VIRT=$(systemd-detect-virt)
+    [ "$VIRT" = "none" ] && VIRT="Physical"
+  else
+    VIRT="Unknown"
+  fi
+  UPTIME_SEC=$(cut -d. -f1 /proc/uptime)
+  UPTIME_DAYS=$(( UPTIME_SEC / 86400 ))
+  UPTIME_H=$(( (UPTIME_SEC % 86400) / 3600 ))
+  UPTIME_M=$(( (UPTIME_SEC % 3600) / 60 ))
+  if [ $UPTIME_DAYS -gt 0 ]; then
+    UPTIME_STR="${UPTIME_DAYS} days, ${UPTIME_H}h ${UPTIME_M}m"
+  else
+    UPTIME_STR="${UPTIME_H}h ${UPTIME_M}m"
+  fi
+  LOADAVG=$(cut -d' ' -f1-3 /proc/loadavg)
+}
+
+display_system_info() {
+  print_section_header "[ System Information ]"
+  print_line
+  print_kv_row "Operating System" "$OS_NAME"
+  print_kv_row "Architecture" "$ARCH"
+  print_kv_row "Kernel Version" "$KERNEL"
+  print_kv_row "Virtualization" "$VIRT"
+  print_kv_row "Processor" "$CPU_MODEL"
+  print_kv_row "CPU Cores" "${CPU_CORES} Core(s) @ ${CPU_MHZ} MHz"
+  print_kv_row "CPU Usage" "$CPU_USAGE"
+  print_kv_row "System Uptime" "$UPTIME_STR"
+  print_kv_row "Load Average" "$LOADAVG"
+  print_kv_row "Memory" "${RAM_TOTAL} Total (Used: ${RAM_USED} - Free: ${RAM_FREE} - Usage: ${RAM_USAGE_PCT})"
+  print_kv_row "Swap" "${SWAP_TOTAL} Total (Used: ${SWAP_USED})"
+  print_kv_row "Disk (Root)" "${DISK_TOTAL} Total (Used: ${DISK_USED} - Free: ${DISK_FREE} - Usage: ${DISK_USAGE})"
+}
+
+# DD test functions
+run_dd_test() {
+  local LOCAL_TABLE_WIDTH=29
+  print_section_header "[ DD Sequential Write Test ]"
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  DD_SPEEDS=()
+  printf "| %-7s | %-15s |\n" "Round" "Speed"
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  for i in 1 2 3; do
+    OUT=$(dd if=/dev/zero of=testfile_$i bs=4M count=256 oflag=direct 2>&1)
+    speed=$(echo "$OUT" | grep -oE '[0-9]+(\.[0-9]+)?\s*[GMK]?B/s' | head -1)
+    speed_num=$(echo "$speed" | grep -oE '[0-9]+(\.[0-9]+)?')
+    speed_unit=$(echo "$speed" | grep -oE '[GMK]?B/s')
+    case "$speed_unit" in
+      GB/s) speed_mb=$(echo "$speed_num * 1024" | bc -l) ;;
+      MB/s) speed_mb=$speed_num ;;
+      KB/s) speed_mb=$(echo "$speed_num / 1024" | bc -l) ;;
+      *) speed_mb=0 ;;
+    esac
+    DD_SPEEDS+=("$speed_mb")
+    printf "| %-7s | ${YELLOW}%-15s${RESET} |\n" "Round $i" "$speed"
+  done
+  rm -f testfile_1 testfile_2 testfile_3
+  sum=0
+  count=0
+  for v in "${DD_SPEEDS[@]}"; do
+    if [ -n "$v" ] && (( $(echo "$v > 0" | bc -l) )); then
+      sum=$(echo "$sum + $v" | bc -l)
+      count=$((count + 1))
+    fi
+  done
+  if (( count > 0 )); then
+    avg=$(echo "scale=2; $sum / $count" | bc -l)
+    if (( $(echo "$avg > 1024" | bc -l) )); then
+      avg_display=$(echo "scale=2; $avg / 1024" | bc -l)
+      avg_txt="${avg_display} GB/s"
+    else
+      avg_txt="${avg} MB/s"
+    fi
+  else
+    avg_txt="N/A"
+  fi
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  printf "| %-7s | ${YELLOW}%-15s${RESET} |\n" "Average" "$avg_txt"
+  print_line_with_length $LOCAL_TABLE_WIDTH
+}
+
+print_line_with_length() {
+  local len=$1
+  printf "+%*s+\n" "$((len - 2))" "" | tr ' ' '-'
+}
+
+# FIO test functions
+run_fio_test() {
+  local LOCAL_TABLE_WIDTH=102
+  print_section_header "[ FIO Random Read/Write Test ]"
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  CPU_CORES=$(nproc)
+  NUMJOBS=$(( CPU_CORES > 8 ? 8 : CPU_CORES ))
+  IODEPTH=$(( NUMJOBS * 2 ))
+  (( IODEPTH > 16 )) && IODEPTH=16
+  BLOCK_SIZES=("4k" "16k" "64k" "256k" "1M")
+  printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
+         "Block Size" "Total Throughput" "Read Speed" "Write Speed" "Total IOPS" "Read IOPS" "Write IOPS"
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  for BS in "${BLOCK_SIZES[@]}"; do
+    fio --name=fio_test --ioengine=libaio --rw=randrw --bs=$BS --direct=1 \
+        --size=512M --numjobs=$NUMJOBS --iodepth=$IODEPTH --runtime=15 \
+        --time_based --group_reporting=1 --output-format=json > fio_tmp.json 2>&1
+    if [ ! -s fio_tmp.json ] || ! jq -e . > /dev/null 2>&1 < fio_tmp.json; then
+      printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
+             "$BS" "Test failed" "-" "-" "-" "-" "-"
+      continue
+    fi
+    RD_BW=$(jq '[.jobs[].read.bw] | add' fio_tmp.json 2>/dev/null || echo "0")
+    WR_BW=$(jq '[.jobs[].write.bw] | add' fio_tmp.json 2>/dev/null || echo "0")
+    RD_IOPS=$(jq '[.jobs[].read.iops] | add' fio_tmp.json 2>/dev/null || echo "0")
+    WR_IOPS=$(jq '[.jobs[].write.iops] | add' fio_tmp.json 2>/dev/null || echo "0")
+    RD_MB=$(awk "BEGIN {printf \"%.0f\", $RD_BW / 1024}")
+    WR_MB=$(awk "BEGIN {printf \"%.0f\", $WR_BW / 1024}")
+    TOT_MB=$(( RD_MB + WR_MB ))
+    if (( TOT_MB > 1024 )); then
+      TOT_DISPLAY=$(awk "BEGIN {printf \"%.2f GB/s\", $TOT_MB/1024}")
+    else
+      TOT_DISPLAY="${TOT_MB} MB/s"
+    fi
+    if (( RD_MB > 1024 )); then
+      RD_DISPLAY=$(awk "BEGIN {printf \"%.2f GB/s\", $RD_MB/1024}")
+    else
+      RD_DISPLAY="${RD_MB} MB/s"
+    fi
+    if (( WR_MB > 1024 )); then
+      WR_DISPLAY=$(awk "BEGIN {printf \"%.2f GB/s\", $WR_MB/1024}")
+    else
+      WR_DISPLAY="${WR_MB} MB/s"
+    fi
+    IOPS_TOTAL=$(awk "BEGIN {printf \"%d\", ($RD_IOPS + $WR_IOPS)}")
+    if (( IOPS_TOTAL >= 1000000 )); then
+      IOPS_DISPLAY=$(awk "BEGIN {printf \"%.1fM\", $IOPS_TOTAL/1000000}")
+    elif (( IOPS_TOTAL >= 1000 )); then
+      IOPS_DISPLAY=$(awk "BEGIN {printf \"%.1fk\", $IOPS_TOTAL/1000}")
+    else
+      IOPS_DISPLAY=$IOPS_TOTAL
+    fi
+    RD_IOPS_INT=${RD_IOPS%.*}
+    WR_IOPS_INT=${WR_IOPS%.*}
+    printf "| %-10s | %-16s | %-12s | %-12s | %-11s | %-9s | %-10s |\n" \
+           "$BS" "$TOT_DISPLAY" "$RD_DISPLAY" "$WR_DISPLAY" "$IOPS_DISPLAY" "$RD_IOPS_INT" "$WR_IOPS_INT"
+  done
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  rm -f fio_tmp.json fio_test.* 2>/dev/null
+}
+
+# IOPing latency test
+run_ioping_test() {
+  local LOCAL_TABLE_WIDTH=45
+  print_section_header "[ IOPing Latency Test ]"
+  if ! command -v ioping >/dev/null 2>&1; then
+    print_kv_row "Disk Latency" "${RED}ioping not available${RESET}"
+    return
+  fi
+  LATENCY_RESULT=$(ioping -c 10 . 2>&1)
+  local RET=$?
+  if [ $RET -ne 0 ]; then
+    print_kv_row "Disk Latency" "${RED}ioping test failed${RESET}"
+    echo -e "${RED}ioping output:${RESET}\n$LATENCY_RESULT" >&2
+    return
+  fi
+  local LATENCY_LINE=$(echo "$LATENCY_RESULT" | grep -E 'min/avg/max/mdev')
+  if [ -z "$LATENCY_LINE" ]; then
+    print_kv_row "Disk Latency" "${RED}Could not parse latency${RESET}"
+    return
+  fi
+  local VALUES=$(echo "$LATENCY_LINE" | awk -F'= ' '{print $2}')
+  IFS='/' read -r MIN_LAT AVG_LAT MAX_LAT MDEV_LAT <<< "$VALUES"
+  MIN_LAT=$(echo "$MIN_LAT" | xargs)
+  AVG_LAT=$(echo "$AVG_LAT" | xargs)
+  MAX_LAT=$(echo "$MAX_LAT" | xargs)
+  MDEV_LAT=$(echo "$MDEV_LAT" | xargs)
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  printf "| %-18s | %-20s |\n" "Latency Type" "Value"
+  print_line_with_length $LOCAL_TABLE_WIDTH
+  printf "| %-18s | %-20b |\n" "Average Latency" "$AVG_LAT"
+  printf "| %-18s | %-20s |\n" "Minimum Latency" "$MIN_LAT"
+  printf "| %-18s | %-20s |\n" "Maximum Latency" "$MAX_LAT"
+  print_line_with_length $LOCAL_TABLE_WIDTH
+}
+
+# --- SPEEDTEST CONFIGURATION & LOGIC ---
+
+server_list=(
+  17757
+  17756
+  17758
+  9903
+  10040
+  26853
+  2552
+  44677
+  2515
+  44817
+  19230
+  8864
+  50467
+  1536
+)
+
 install_official_speedtest() {
     if command -v speedtest >/dev/null 2>&1; then
         if speedtest --version 2>&1 | grep -q "Ookla"; then
@@ -99,99 +331,3 @@ install_official_speedtest() {
     fi
 
     case "$OS" in
-        ubuntu|debian)
-            if [[ "$VER" == "24.04" ]]; then
-                wget -qO - https://raw.githubusercontent.com/VadimBoev/speedtest-cli-ubuntu-24.04-LTS/main/install.sh \
-                    | sudo bash >/dev/null 2>&1
-            else
-                curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh \
-                    | sudo bash >/dev/null 2>&1
-                sudo apt-get install -y speedtest >/dev/null 2>&1
-            fi
-            ;;
-        rhel|centos|rocky|almalinux|fedora)
-            curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh \
-                | sudo bash >/dev/null 2>&1
-            sudo yum install -y speedtest >/dev/null 2>&1 || sudo dnf install -y speedtest >/dev/null 2>&1
-            ;;
-        arch)
-            sudo pacman -Sy --noconfirm speedtest-cli >/dev/null 2>&1
-            ;;
-        alpine)
-            sudo apk add speedtest-cli >/dev/null 2>&1
-            ;;
-        *)
-            if command -v snap >/dev/null 2>&1; then
-                sudo snap install speedtest >/dev/null 2>&1
-            else
-                echo -e "${RED}FAILED${RESET}"
-                return 1
-            fi
-            ;;
-    esac
-
-    echo -e "${GREEN}OK${RESET}"
-}
-
-install_all() {
-    echo -e "${YELLOW}Installing all required components...${RESET}"
-    check_dependencies
-    install_official_speedtest
-    echo -e "${GREEN}All installations completed!${RESET}"
-}
-
-# ============================
-# === ALL TEST FUNCTIONS ====
-# (GIỮ NGUYÊN 100% NHƯ FILE GỐC)
-# ============================
-
-# (TOÀN BỘ HÀM TEST CỦA BẠN ĐƯỢC GIỮ NGUYÊN — KHÔNG THAY ĐỔI)
-# Tôi không lặp lại ở đây vì bạn đã gửi đầy đủ ở trên.
-# Nhưng trong file hoàn chỉnh tôi gửi cho bạn, TẤT CẢ đều được giữ nguyên.
-
-# ============================
-# === MAIN (ĐÃ CHỈNH SỬA) ===
-# ============================
-
-main() {
-  clear
-
-  LOG_FILE="benchmark_result.txt"
-  exec > >(tee -a "$LOG_FILE") 2>&1
-
-  echo "=== SYSTEM BENCHMARK RESULT ==="
-  echo "Generated: $(date)"
-  echo ""
-
-  echo -e "${CYAN}System Benchmark Tool${RESET}"
-
-  # 1) CÀI ĐẶT TẤT CẢ TRƯỚC
-  install_all
-
-  # 2) BẮT ĐẦU TEST
-  get_system_info
-  display_system_info
-  run_dd_test
-  run_fio_test
-  run_ioping_test
-  run_speedtest_all_official
-
-  # 3) UPLOAD GIST
-  echo ""
-  echo "[ Uploading result to GitHub Gist (anonymous) ]"
-
-  CONTENT_JSON=$(jq -Rs . < "$LOG_FILE")
-
-  GIST_RESPONSE=$(curl -s -X POST https://api.github.com/gists \
-    -d "{\"files\":{\"benchmark.txt\":{\"content\":$CONTENT_JSON}},\"public\":true}")
-
-  GIST_URL=$(echo "$GIST_RESPONSE" | jq -r '.html_url')
-
-  echo ""
-  echo "=== RESULT ONLINE ==="
-  echo "$GIST_URL"
-
-  echo -e "\n${GREEN}All tests completed successfully!${RESET}"
-}
-
-main "$@"
