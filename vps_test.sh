@@ -316,55 +316,80 @@ server_list=(
 )
 
 install_official_speedtest() {
-  # Check if official binary is already installed
+  # Nếu đã có speedtest rồi thì bỏ qua
   if command -v speedtest >/dev/null 2>&1; then
-    if speedtest --version 2>&1 | grep -q "Ookla"; then
-        return
-    fi
+      if speedtest --version 2>&1 | grep -q "Ookla"; then
+          return
+      fi
   fi
 
-  echo -ne "  -> Installing Official Ookla Speedtest Binary ... "
-  
-  # Detect OS details for installation method
-  local OS_ID=""
-  local OS_VER=""
-  
+  echo "→ Installing Official Ookla Speedtest..."
+
+  # Lấy thông tin OS
+  OS=""
   if [ -f /etc/os-release ]; then
       . /etc/os-release
-      OS_ID=$ID
-      OS_VER=$(echo "$VERSION_ID" | cut -d. -f1) # Major version
+      OS=$ID
+      VER=$VERSION_ID
+  elif uname -s | grep -qi "Darwin"; then
+      OS="macos"
+  elif uname -s | grep -qi "FreeBSD"; then
+      OS="freebsd"
   fi
 
-  # LOGIC: Ubuntu >= 25 uses SNAP
-  if [[ "$OS_ID" == "ubuntu" ]] && [[ "$OS_VER" -ge 25 ]]; then
-      echo -ne "(Snap) ... "
-      if command -v snap >/dev/null 2>&1; then
-          sudo snap install speedtest >/dev/null 2>&1
-      else
-          echo -e "${RED}Snap not found${RESET}"
-          return 1
-      fi
-  
-  # Standard Debian/Ubuntu < 25
-  elif [ -f /etc/debian_version ]; then
-      curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash >/dev/null 2>&1
-      sudo apt-get install -y speedtest >/dev/null 2>&1
-      
-  # RHEL/CentOS/Alma/Rocky
-  elif [ -f /etc/redhat-release ]; then
-      curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh | sudo bash >/dev/null 2>&1
-      sudo yum install -y speedtest >/dev/null 2>&1
-  else
-      echo -e "${RED}FAILED (Unsupported OS)${RESET}"
-      return 1
-  fi
+  case "$OS" in
+      ubuntu|debian)
+          # Ubuntu 24.04 fix
+          if [[ "$VER" == "24.04" ]]; then
+              echo "Ubuntu 24.04 detected → Using patched installer"
+              wget -qO - https://raw.githubusercontent.com/VadimBoev/speedtest-cli-ubuntu-24.04-LTS/main/install.sh | sudo bash
+          else
+              echo "Debian/Ubuntu detected → Using Ookla repo"
+              curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.deb.sh | sudo bash
+              sudo apt-get install -y speedtest
+          fi
+          ;;
 
-  if [ $? -eq 0 ]; then
-      echo -e "${GREEN}OK${RESET}"
-  else
-      echo -e "${RED}FAILED${RESET}"
-  fi
+      rhel|centos|rocky|almalinux|fedora)
+          echo "RHEL/CentOS/Fedora detected → Using RPM repo"
+          curl -s https://packagecloud.io/install/repositories/ookla/speedtest-cli/script.rpm.sh | sudo bash
+          sudo yum install -y speedtest || sudo dnf install -y speedtest
+          ;;
+
+      arch)
+          echo "Arch Linux detected → Installing via pacman"
+          sudo pacman -Sy --noconfirm speedtest-cli
+          ;;
+
+      alpine)
+          echo "Alpine Linux detected → Installing via apk"
+          sudo apk add speedtest-cli
+          ;;
+
+      macos)
+          echo "macOS detected → Installing via Homebrew"
+          brew install speedtest-cli
+          ;;
+
+      freebsd)
+          echo "FreeBSD detected → Installing via pkg"
+          sudo pkg install -y speedtest
+          ;;
+
+      *)
+          echo "Unsupported OS → Trying Snap"
+          if command -v snap >/dev/null 2>&1; then
+              sudo snap install speedtest
+          else
+              echo "FAILED: No supported installer found"
+              return 1
+          fi
+          ;;
+  esac
+
+  echo "→ Speedtest installation completed."
 }
+
 
 run_speedtest_official_binary() {
   local SERVER_ID=$1
