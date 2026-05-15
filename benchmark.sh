@@ -441,7 +441,7 @@ server_list=(
   26853 # Viettel Network Ho Chi Minh
   2552  # FPT Telecom Ha Noi
   44677 # FPT Telecom Da Nang
-  11342 # VIETPN CO, LTD
+  2515  # FPT Telecom Ho Chi Minh
   44817 # SPTEL PTE Ltd Singapore
   19230 # Hivelocity Los Angeles
   8864  # CenturyLink Seattle
@@ -581,31 +581,39 @@ check_outbound_port_8080() {
 run_speedtest_all_official() {
   print_section_header "[ Network Speed Test ]"
 
+  # Always check outbound port 8080 right before using Ookla speedtest.
+  # If it is closed, skip speedtest completely and use HTTP fallback.
+  if ! check_outbound_port_8080; then
+      run_fallback_speedtest
+      return
+  fi
+
   # If not installed earlier, install now (idempotent)
   if [ "$SPEEDTEST_INSTALLED" -eq 0 ]; then
     install_official_speedtest >/dev/null 2>&1 || true
     hash -r 2>/dev/null || true
   fi
 
-  if check_outbound_port_8080; then
-      print_speedtest_header
-      
-      for SERVER_ID in "${server_list[@]}"; do
-        local result
-        result=$(run_speedtest_official_binary "$SERVER_ID") || true
-        if [ -n "$result" ]; then
-          IFS='|' read -r id server dl ul lat <<< "$result"
-          print_speedtest_row "$id" "$server" "$dl" "$ul" "$lat"
-        else
-          printf "| %-6s | %-30s | %-15s | %-12s | %-12s |\n" "$SERVER_ID" "Test Failed" "-" "-" "-"
-        fi
-      done
-      local WIDTH=95
-      printf "+%*s+\n" $((WIDTH - 6)) "" | tr ' ' '-'
-      
-  else
+  # Re-check after possible install because port status may change while setup runs.
+  if ! check_outbound_port_8080; then
       run_fallback_speedtest
+      return
   fi
+
+  print_speedtest_header
+  
+  for SERVER_ID in "${server_list[@]}"; do
+    local result
+    result=$(run_speedtest_official_binary "$SERVER_ID") || true
+    if [ -n "$result" ]; then
+      IFS='|' read -r id server dl ul lat <<< "$result"
+      print_speedtest_row "$id" "$server" "$dl" "$ul" "$lat"
+    else
+      printf "| %-6s | %-30s | %-15s | %-12s | %-12s |\n" "$SERVER_ID" "Test Failed" "-" "-" "-"
+    fi
+  done
+  local WIDTH=95
+  printf "+%*s+\n" $((WIDTH - 6)) "" | tr ' ' '-'
 }
 
 # -------------------------
@@ -687,9 +695,8 @@ upload_result_online() {
 # MAIN
 # -------------------------
 main() {
-  
   clear
-  echo "Begin Install Package"
+
   # Install dependencies silently before logging so install messages are not included in the result.
   install_all >/dev/null 2>&1
 
