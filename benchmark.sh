@@ -687,8 +687,9 @@ upload_result_online() {
 # MAIN
 # -------------------------
 main() {
+  echo "Begin Install Package"
   clear
-
+  
   # Install dependencies silently before logging so install messages are not included in the result.
   install_all >/dev/null 2>&1
 
