@@ -3,7 +3,7 @@
 # - Installs dependencies first (silent)
 # - Runs all tests (system info, dd, fio, ioping, speedtest/fallback)
 # - Logs everything to benchmark_result.txt (tee so output still shows on SSH)
-# - Uploads the log to GitHub Gist anonymously and prints the Gist URL
+# - Uploads the log to public web paste services and prints the result URL
 #
 # Usage:
 #   chmod +x benchmark_full.sh
@@ -24,6 +24,9 @@ RESET="\033[0m"
 # ==========================================
 CHECK_URL_8080="http://8080.legiang360.com:8080"
 LOG_FILE="benchmark_result.txt"
+# Optional: set CUSTOM_UPLOAD_URL to your own endpoint that accepts multipart field "file".
+# Example: CUSTOM_UPLOAD_URL="https://benchmark.bnixvps.io.vn/upload.php" ./benchmark.sh
+CUSTOM_UPLOAD_URL="${CUSTOM_UPLOAD_URL:-https://benchmark.bnixvps.io.vn/upload.php}"
 
 # Flag to avoid reinstalling speedtest multiple times
 SPEEDTEST_INSTALLED=0
@@ -619,6 +622,81 @@ run_speedtest_all_official() {
 }
 
 # -------------------------
+# Upload result helpers
+# -------------------------
+extract_url_from_response() {
+  grep -oE "https?://[^[:space:]\"'<>]+" | head -1 | tr -d '\r'
+}
+
+upload_to_custom_web() {
+  local response
+  response=$(curl -sS --fail --connect-timeout 15 --max-time 180 --retry 2 \
+    -F "file=@${LOG_FILE};filename=benchmark.txt" "$CUSTOM_UPLOAD_URL" 2>/dev/null) || return 1
+  echo "$response" | extract_url_from_response
+}
+
+upload_to_0x0() {
+  local response
+  response=$(curl -sS --fail --connect-timeout 15 --max-time 180 --retry 2 \
+    -F "file=@${LOG_FILE};filename=benchmark.txt" https://0x0.st/ 2>/dev/null) || return 1
+  echo "$response" | extract_url_from_response
+}
+
+upload_to_paste_rs() {
+  local response
+  response=$(curl -sS --fail --connect-timeout 15 --max-time 180 --retry 2 \
+    --data-binary @"$LOG_FILE" https://paste.rs 2>/dev/null) || return 1
+  echo "$response" | extract_url_from_response
+}
+
+upload_to_transfer_sh() {
+  local response file_name
+  file_name="benchmark-$(date +%Y%m%d-%H%M%S).txt"
+  response=$(curl -sS --fail --connect-timeout 15 --max-time 180 --retry 2 \
+    --upload-file "$LOG_FILE" "https://transfer.sh/$file_name" 2>/dev/null) || return 1
+  echo "$response" | extract_url_from_response
+}
+
+upload_result_online() {
+  local url service
+
+  if [ ! -s "$LOG_FILE" ]; then
+    echo "Log file not found or empty: $LOG_FILE" >&2
+    return 1
+  fi
+
+  if [ -n "$CUSTOM_UPLOAD_URL" ]; then
+    printf "  -> Trying custom web endpoint ... " >&2
+    url=$(upload_to_custom_web) || true
+    if [[ "$url" =~ ^https?:// ]]; then
+      echo -e "${GREEN}OK${RESET}" >&2
+      echo "$url"
+      return 0
+    fi
+    echo -e "${RED}FAILED${RESET}" >&2
+  fi
+
+  for service in "0x0.st" "paste.rs" "transfer.sh"; do
+    printf "  -> Trying %s ... " "$service" >&2
+    url=""
+    case "$service" in
+      "0x0.st") url=$(upload_to_0x0) || true ;;
+      "paste.rs") url=$(upload_to_paste_rs) || true ;;
+      "transfer.sh") url=$(upload_to_transfer_sh) || true ;;
+    esac
+
+    if [[ "$url" =~ ^https?:// ]]; then
+      echo -e "${GREEN}OK${RESET}" >&2
+      echo "$url"
+      return 0
+    fi
+    echo -e "${RED}FAILED${RESET}" >&2
+  done
+
+  return 1
+}
+
+# -------------------------
 # MAIN
 # -------------------------
 main() {
@@ -648,21 +726,17 @@ main() {
   # Network tests
   run_speedtest_all_official
 
-  # 3) Upload results to GitHub Gist (anonymous)
+  # 3) Upload results to public web paste services (no login)
   echo ""
-  echo "[ Uploading result to GitHub Gist (anonymous) ]"
+  echo "[ Uploading result to Web Paste (no login) ]"
 
-  # Ensure jq exists (should be installed by check_dependencies)
-  if ! command -v jq >/dev/null 2>&1; then
-    echo "jq not found; cannot prepare JSON for Gist upload."
+  ONLINE_URL=$(upload_result_online) || ONLINE_URL=""
+  echo ""
+  echo "=== RESULT ONLINE ==="
+  if [ -n "$ONLINE_URL" ]; then
+    echo "$ONLINE_URL"
   else
-    CONTENT_JSON=$(jq -Rs . < "$LOG_FILE")
-    GIST_RESPONSE=$(curl -s -X POST https://api.github.com/gists \
-      -d "{\"files\":{\"benchmark.txt\":{\"content\":$CONTENT_JSON}},\"public\":true}")
-    GIST_URL=$(echo "$GIST_RESPONSE" | jq -r '.html_url' 2>/dev/null || echo "null")
-    echo ""
-    echo "=== RESULT ONLINE ==="
-    echo "$GIST_URL"
+    echo "Upload failed. Local file: $LOG_FILE"
   fi
 
   echo -e "\n${GREEN}All tests completed successfully!${RESET}"
